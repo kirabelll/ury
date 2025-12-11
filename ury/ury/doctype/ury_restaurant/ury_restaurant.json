@@ -1,0 +1,183 @@
+{
+ "actions": [],
+ "autoname": "prompt",
+ "creation": "2023-09-13 23:41:41.934914",
+ "default_view": "List",
+ "doctype": "DocType",
+ "document_type": "Setup",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "image",
+  "company",
+  "invoice_series_prefix",
+  "aggregator_series_prefix",
+  "column_break_4",
+  "address",
+  "branch",
+  "default_tax_template",
+  "menu_info_section",
+  "active_menu",
+  "room_wise_menu",
+  "menu_for_room",
+  "column_break_vo5jt",
+  "default_room",
+  "order_type_wise_menu",
+  "order_type_menu"
+ ],
+ "fields": [
+  {
+   "fieldname": "image",
+   "fieldtype": "Attach Image",
+   "hidden": 1,
+   "label": "Image",
+   "print_hide": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "invoice_series_prefix",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Invoice Series Prefix",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "active_menu",
+   "fieldtype": "Link",
+   "label": "Default Menu",
+   "options": "URY Menu"
+  },
+  {
+   "fieldname": "branch",
+   "fieldtype": "Link",
+   "label": "Branch",
+   "options": "Branch",
+   "reqd": 1
+  },
+  {
+   "fieldname": "default_tax_template",
+   "fieldtype": "Link",
+   "label": "Default Tax Template",
+   "options": "Sales Taxes and Charges Template"
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Link",
+   "label": "Address",
+   "options": "Address"
+  },
+  {
+   "fieldname": "menu_info_section",
+   "fieldtype": "Section Break",
+   "label": "Menu Info"
+  },
+  {
+   "default": "0",
+   "fieldname": "room_wise_menu",
+   "fieldtype": "Check",
+   "label": "Room Wise Menu"
+  },
+  {
+   "depends_on": "eval:doc.room_wise_menu ",
+   "fieldname": "menu_for_room",
+   "fieldtype": "Table",
+   "label": "Menu For Room",
+   "options": "Menu for Room"
+  },
+  {
+   "fieldname": "column_break_vo5jt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "default_room",
+   "fieldtype": "Link",
+   "label": "Default Room",
+   "options": "URY Room",
+   "reqd": 1
+  },
+  {
+   "fieldname": "aggregator_series_prefix",
+   "fieldtype": "Data",
+   "label": "Aggregator Series Prefix"
+  },
+  {
+   "default": "0",
+   "fieldname": "order_type_wise_menu",
+   "fieldtype": "Check",
+   "label": "Order Type Wise Menu"
+  },
+  {
+   "depends_on": "eval:doc.order_type_wise_menu ",
+   "fieldname": "order_type_menu",
+   "fieldtype": "Table",
+   "label": "Order Type Menu",
+   "options": "Order Type Menu"
+  }
+ ],
+ "image_field": "image",
+ "links": [],
+ "modified": "2025-03-06 10:39:17.307700",
+ "modified_by": "Administrator",
+ "module": "URY",
+ "name": "URY Restaurant",
+ "naming_rule": "Set by user",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "select": 1,
+   "set_user_permissions": 1,
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "URY Manager",
+   "select": 1,
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "URY Captain",
+   "select": 1
+  },
+  {
+   "read": 1,
+   "role": "URY Cashier",
+   "select": 1,
+   "write": 1
+  }
+ ],
+ "quick_entry": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
