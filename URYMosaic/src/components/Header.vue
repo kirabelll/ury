@@ -22,7 +22,7 @@
 
 <script>
 
-import uriMosaicImage from "@/assets/logos/mosaic.jpg";
+import uriMosaicImage from "@/assets/logos/mosaic.png";
 // import KOT from './kot.vue';
 
 export default {
