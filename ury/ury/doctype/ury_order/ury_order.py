@@ -556,9 +556,7 @@ def cancel_order(invoice_id, reason):
 # Method for URY POS
 @frappe.whitelist()
 def make_invoice(customer=None, payments=None, cashier=None, pos_profile=None, owner=None, additionalDiscount=None, table=None, invoice=None):
-    # Validate required parameters with more detailed error messages
-    if not customer or (isinstance(customer, str) and customer.strip() == ""):
-        frappe.throw(f"Customer is required. Received: '{customer}'")
+    # Customer is optional - no validation needed
     if not payments:
         frappe.throw(f"Payments are required. Received: '{payments}'")
     if not cashier or (isinstance(cashier, str) and cashier.strip() == ""):
@@ -575,7 +573,9 @@ def make_invoice(customer=None, payments=None, cashier=None, pos_profile=None, o
         restaurant = get_restaurant_and_menu_name(table)
         invoice.restaurant = restaurant
 
-    invoice.customer = customer
+    # Only set customer if provided
+    if customer:
+        invoice.customer = customer
     invoice.pos_profile = pos_profile
     invoice.additional_discount_percentage=additionalDiscount
     invoice.calculate_taxes_and_totals()
