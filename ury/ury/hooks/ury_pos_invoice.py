@@ -19,10 +19,12 @@ def before_submit(doc, method):
     calculate_and_set_times(doc, method)
     validate_invoice_print(doc, method)
     ro_reload_submit(doc, method)
+    deduct_ingredients_from_stock(doc, method)
 
 
 def on_trash(doc, method):
     table_status_delete(doc, method)
+    restore_ingredients_to_stock(doc, method)
 
 
 def validate_invoice(doc, method):
@@ -207,3 +209,286 @@ def restrict_existing_order(doc, event):
             frappe.throw(
                 ("Table {0} has an existing invoice").format(doc.restaurant_table)
             )
+
+
+def deduct_ingredients_from_stock(doc, method):
+    """
+    Deduct ingredients from stock based on BOM (recipe) when POS Invoice is submitted
+    """
+    try:
+        # Check if inventory deduction is enabled for this POS Profile
+        enable_inventory_deduction = frappe.db.get_value("POS Profile", doc.pos_profile, "custom_enable_inventory_deduction")
+        if not enable_inventory_deduction:
+            return
+        # Get the default warehouse for the branch/restaurant
+        warehouse = get_default_warehouse(doc)
+        if not warehouse:
+            frappe.log_error(f"No default warehouse found for POS Invoice {doc.name}", "Stock Deduction Error")
+            return
+        
+        # Collect all ingredients to deduct
+        ingredients_to_deduct = []
+        
+        for item in doc.items:
+            # Get the BOM for this item
+            bom = frappe.db.get_value("BOM", 
+                {"item": item.item_code, "is_active": 1, "is_default": 1, "docstatus": 1}, 
+                "name")
+            
+            if bom:
+                # Get BOM details
+                bom_doc = frappe.get_doc("BOM", bom)
+                
+                # Calculate ingredient quantities based on sold quantity
+                for bom_item in bom_doc.items:
+                    # Calculate required quantity: (BOM qty / BOM output qty) * sold qty
+                    required_qty = (bom_item.qty / bom_doc.quantity) * item.qty
+                    
+                    # Handle UOM conversion if needed
+                    stock_uom = frappe.db.get_value("Item", bom_item.item_code, "stock_uom")
+                    final_qty = required_qty
+                    final_uom = bom_item.uom
+                    
+                    if stock_uom != bom_item.uom:
+                        # Convert to stock UOM for inventory deduction
+                        conversion_result = convert_uom_for_deduction(required_qty, bom_item.uom, stock_uom, bom_item.item_code)
+                        if conversion_result["success"]:
+                            final_qty = conversion_result["converted_qty"]
+                            final_uom = stock_uom
+                    
+                    # Add to ingredients list
+                    ingredient_key = f"{bom_item.item_code}_{warehouse}"
+                    
+                    # If ingredient already exists, add to quantity
+                    existing_ingredient = next((ing for ing in ingredients_to_deduct 
+                                              if ing["item_code"] == bom_item.item_code and ing["warehouse"] == warehouse), None)
+                    
+                    if existing_ingredient:
+                        existing_ingredient["qty"] += final_qty
+                    else:
+                        ingredients_to_deduct.append({
+                            "item_code": bom_item.item_code,
+                            "item_name": bom_item.item_name,
+                            "qty": final_qty,
+                            "warehouse": warehouse,
+                            "uom": final_uom,
+                            "original_qty": required_qty,
+                            "original_uom": bom_item.uom
+                        })
+        
+        # Create Stock Entry if there are ingredients to deduct
+        if ingredients_to_deduct:
+            create_stock_entry_for_ingredients(doc, ingredients_to_deduct, warehouse)
+            
+    except Exception as e:
+        frappe.log_error(f"Error in deduct_ingredients_from_stock for POS Invoice {doc.name}: {str(e)}", "Stock Deduction Error")
+        # Don't throw error to avoid blocking invoice submission
+        # frappe.throw(f"Error deducting ingredients from stock: {str(e)}")
+
+
+def get_default_warehouse(doc):
+    """
+    Get the default warehouse for stock deduction
+    Priority: POS Profile warehouse > Branch warehouse > Company default warehouse
+    """
+    # Try to get warehouse from POS Profile
+    warehouse = frappe.db.get_value("POS Profile", doc.pos_profile, "warehouse")
+    
+    if not warehouse:
+        # Try to get from Branch (if custom field exists)
+        warehouse = frappe.db.get_value("Branch", doc.branch, "custom_default_warehouse")
+    
+    if not warehouse:
+        # Get company's default warehouse
+        company = frappe.db.get_value("POS Profile", doc.pos_profile, "company")
+        warehouse = frappe.db.get_value("Company", company, "default_warehouse")
+    
+    return warehouse
+
+
+def create_stock_entry_for_ingredients(pos_invoice, ingredients, warehouse):
+    """
+    Create a Stock Entry to deduct ingredients from inventory
+    """
+    try:
+        # Create Stock Entry document
+        stock_entry = frappe.new_doc("Stock Entry")
+        stock_entry.stock_entry_type = "Material Issue"
+        stock_entry.purpose = "Material Issue"
+        stock_entry.company = frappe.db.get_value("POS Profile", pos_invoice.pos_profile, "company")
+        stock_entry.posting_date = pos_invoice.posting_date
+        stock_entry.posting_time = pos_invoice.posting_time
+        
+        # Add reference to POS Invoice
+        stock_entry.add_comment("Comment", f"Automatic ingredient deduction for POS Invoice: {pos_invoice.name}")
+        
+        # Add items to Stock Entry
+        for ingredient in ingredients:
+            # Check if item has stock
+            stock_qty = frappe.db.get_value("Bin", 
+                {"item_code": ingredient["item_code"], "warehouse": warehouse}, 
+                "actual_qty") or 0
+            
+            if stock_qty >= ingredient["qty"]:
+                stock_entry.append("items", {
+                    "item_code": ingredient["item_code"],
+                    "item_name": ingredient["item_name"],
+                    "qty": ingredient["qty"],
+                    "uom": ingredient["uom"],
+                    "s_warehouse": warehouse,
+                    "basic_rate": frappe.db.get_value("Item Price", 
+                        {"item_code": ingredient["item_code"]}, "price_list_rate") or 0
+                })
+            else:
+                # Log insufficient stock but don't block the process
+                frappe.log_error(
+                    f"Insufficient stock for {ingredient['item_name']} ({ingredient['item_code']}). "
+                    f"Required: {ingredient['qty']}, Available: {stock_qty}",
+                    "Insufficient Stock Warning"
+                )
+        
+        # Submit Stock Entry if there are items
+        if stock_entry.items:
+            stock_entry.insert()
+            stock_entry.submit()
+            
+            # Add a comment to POS Invoice about the stock entry
+            pos_invoice.add_comment("Comment", f"Stock Entry {stock_entry.name} created for ingredient deduction")
+            
+    except Exception as e:
+        frappe.log_error(f"Error creating Stock Entry for POS Invoice {pos_invoice.name}: {str(e)}", "Stock Entry Creation Error")
+        # Don't throw error to avoid blocking invoice submission
+
+def restore_ingredients_to_stock(doc, method):
+    """
+    Restore ingredients to stock when POS Invoice is cancelled/deleted
+    """
+    try:
+        # Check if inventory deduction is enabled for this POS Profile
+        enable_inventory_deduction = frappe.db.get_value("POS Profile", doc.pos_profile, "custom_enable_inventory_deduction")
+        if not enable_inventory_deduction:
+            return
+            
+        # Only restore if the invoice was submitted (had stock deducted)
+        if doc.docstatus != 2:  # 2 = Cancelled
+            return
+            
+        # Get the default warehouse
+        warehouse = get_default_warehouse(doc)
+        if not warehouse:
+            return
+        
+        # Collect all ingredients to restore
+        ingredients_to_restore = []
+        
+        for item in doc.items:
+            # Get the BOM for this item
+            bom = frappe.db.get_value("BOM", 
+                {"item": item.item_code, "is_active": 1, "is_default": 1, "docstatus": 1}, 
+                "name")
+            
+            if bom:
+                # Get BOM details
+                bom_doc = frappe.get_doc("BOM", bom)
+                
+                # Calculate ingredient quantities that were deducted
+                for bom_item in bom_doc.items:
+                    required_qty = (bom_item.qty / bom_doc.quantity) * item.qty
+                    
+                    # Add to ingredients list
+                    existing_ingredient = next((ing for ing in ingredients_to_restore 
+                                              if ing["item_code"] == bom_item.item_code), None)
+                    
+                    if existing_ingredient:
+                        existing_ingredient["qty"] += required_qty
+                    else:
+                        ingredients_to_restore.append({
+                            "item_code": bom_item.item_code,
+                            "item_name": bom_item.item_name,
+                            "qty": required_qty,
+                            "warehouse": warehouse,
+                            "uom": bom_item.uom
+                        })
+        
+        # Create Stock Entry to restore ingredients
+        if ingredients_to_restore:
+            create_stock_entry_for_restoration(doc, ingredients_to_restore, warehouse)
+            
+    except Exception as e:
+        frappe.log_error(f"Error in restore_ingredients_to_stock for POS Invoice {doc.name}: {str(e)}", "Stock Restoration Error")
+
+
+def create_stock_entry_for_restoration(pos_invoice, ingredients, warehouse):
+    """
+    Create a Stock Entry to restore ingredients to inventory when invoice is cancelled
+    """
+    try:
+        # Create Stock Entry document
+        stock_entry = frappe.new_doc("Stock Entry")
+        stock_entry.stock_entry_type = "Material Receipt"
+        stock_entry.purpose = "Material Receipt"
+        stock_entry.company = frappe.db.get_value("POS Profile", pos_invoice.pos_profile, "company")
+        
+        # Add reference to POS Invoice
+        stock_entry.add_comment("Comment", f"Automatic ingredient restoration for cancelled POS Invoice: {pos_invoice.name}")
+        
+        # Add items to Stock Entry
+        for ingredient in ingredients:
+            stock_entry.append("items", {
+                "item_code": ingredient["item_code"],
+                "item_name": ingredient["item_name"],
+                "qty": ingredient["qty"],
+                "uom": ingredient["uom"],
+                "t_warehouse": warehouse,
+                "basic_rate": frappe.db.get_value("Item Price", 
+                    {"item_code": ingredient["item_code"]}, "price_list_rate") or 0
+            })
+        
+        # Submit Stock Entry
+        if stock_entry.items:
+            stock_entry.insert()
+            stock_entry.submit()
+            
+    except Exception as e:
+        frappe.log_error(f"Error creating restoration Stock Entry for POS Invoice {pos_invoice.name}: {str(e)}", "Stock Restoration Error")
+
+def convert_uom_for_deduction(qty, from_uom, to_uom, item_code):
+    """
+    Convert UOM for inventory deduction - simplified version
+    """
+    try:
+        # Common conversions
+        conversions = {
+            ("Liter", "ml"): 1000,
+            ("Liter", "Milliliter"): 1000,
+            ("Kg", "grams"): 1000,
+            ("Kg", "Gram"): 1000,
+            ("Kilogram", "Gram"): 1000,
+            ("Meter", "cm"): 100,
+            ("Meter", "Centimeter"): 100,
+        }
+        
+        conversion_key = (from_uom, to_uom)
+        if conversion_key in conversions:
+            return {
+                "success": True,
+                "converted_qty": qty * conversions[conversion_key]
+            }
+        
+        # Check ERPNext UOM conversion
+        uom_conversion = frappe.db.get_value("UOM Conversion Detail", {
+            "parent": item_code,
+            "uom": to_uom
+        }, "conversion_factor")
+        
+        if uom_conversion:
+            return {
+                "success": True,
+                "converted_qty": qty * uom_conversion
+            }
+        
+        # If same UOM or no conversion found, return original
+        return {"success": True, "converted_qty": qty}
+        
+    except Exception:
+        return {"success": True, "converted_qty": qty}  # Fallback to original qty

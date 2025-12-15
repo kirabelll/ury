@@ -311,6 +311,7 @@ fixtures = [
                     "POS Profile-custom_daily_pos_close",
                     "POS Profile-paid_limit",
                     "POS Profile-table_attention_time",
+                    "POS Profile-custom_enable_inventory_deduction",
                     "POS Opening Entry-restaurant_info",
                     "POS Opening Entry-restaurant",
                     "POS Opening Entry-column_break_e3dky",
