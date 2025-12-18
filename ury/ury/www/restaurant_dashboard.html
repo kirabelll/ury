@@ -1,0 +1,517 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Restaurant Dashboard{% endblock %}
+
+{% block head_include %}
+<style>
+    .dashboard-container {
+        padding: 20px;
+        background-color: #f8f9fa;
+        min-height: 100vh;
+    }
+    
+    .dashboard-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 10px;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .metric-card {
+        background: white;
+        border-radius: 10px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: transform 0.2s;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #2c3e50;
+    }
+    
+    .metric-label {
+        color: #7f8c8d;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .metric-change {
+        font-size: 0.8rem;
+        margin-top: 5px;
+    }
+    
+    .positive { color: #27ae60; }
+    .negative { color: #e74c3c; }
+    
+    .chart-container {
+        background: white;
+        border-radius: 10px;
+        padding: 25px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .alert-item {
+        background: white;
+        border-left: 4px solid #f39c12;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .alert-high { border-left-color: #e74c3c; }
+    .alert-medium { border-left-color: #f39c12; }
+    .alert-low { border-left-color: #3498db; }
+    
+    .date-selector {
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .loading {
+        text-align: center;
+        padding: 50px;
+        color: #7f8c8d;
+    }
+    
+    .table-responsive {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .btn-refresh {
+        background: #3498db;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    
+    .btn-refresh:hover {
+        background: #2980b9;
+    }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block page_content %}
+<div class="dashboard-container">
+    <!-- Header -->
+    <div class="dashboard-header">
+        <div class="row">
+            <div class="col-md-8">
+                <h1>🍽️ Restaurant Dashboard</h1>
+                <p>Real-time analytics for inventory, sales, and profitability</p>
+            </div>
+            <div class="col-md-4 text-right">
+                <button class="btn-refresh" onclick="refreshDashboard()">
+                    🔄 Refresh Data
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Date Range Selector -->
+    <div class="date-selector">
+        <div class="row">
+            <div class="col-md-6">
+                <label>📅 Date Range:</label>
+                <select id="dateRange" class="form-control" onchange="loadDashboard()">
+                    <option value="Today">Today</option>
+                    <option value="Yesterday">Yesterday</option>
+                    <option value="This Week">This Week</option>
+                    <option value="Last Week">Last Week</option>
+                    <option value="This Month">This Month</option>
+                    <option value="Last Month">Last Month</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label>📊 Last Updated:</label>
+                <div id="lastUpdated" class="form-control-static">Loading...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Loading State -->
+    <div id="loadingState" class="loading">
+        <h3>📊 Loading Dashboard...</h3>
+        <p>Please wait while we fetch your restaurant analytics</p>
+    </div>
+    
+    <!-- Main Dashboard Content -->
+    <div id="dashboardContent" style="display: none;">
+        
+        <!-- Key Metrics Row -->
+        <div class="row" id="metricsRow">
+            <!-- Metrics will be populated here -->
+        </div>
+        
+        <!-- Charts Row -->
+        <div class="row">
+            <div class="col-md-8">
+                <div class="chart-container">
+                    <h4>📈 Daily Sales & Profit Trend</h4>
+                    <canvas id="profitChart" height="100"></canvas>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="chart-container">
+                    <h4>🥧 Food Cost Breakdown</h4>
+                    <canvas id="foodCostChart" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Analysis Tables Row -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="table-responsive">
+                    <h4>🏆 Top Selling Items</h4>
+                    <table class="table table-striped" id="topItemsTable">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Qty Sold</th>
+                                <th>Revenue</th>
+                                <th>Profit %</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="table-responsive">
+                    <h4>💰 Most Expensive Ingredients</h4>
+                    <table class="table table-striped" id="expensiveIngredientsTable">
+                        <thead>
+                            <tr>
+                                <th>Ingredient</th>
+                                <th>Total Cost</th>
+                                <th>Qty Used</th>
+                                <th>Orders</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Inventory Status Row -->
+        <div class="row">
+            <div class="col-md-8">
+                <div class="table-responsive">
+                    <h4>📦 Low Stock Items</h4>
+                    <table class="table table-striped" id="lowStockTable">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Current Stock</th>
+                                <th>Safety Stock</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="chart-container">
+                    <h4>⚠️ Stock Alerts</h4>
+                    <div id="alertsContainer">
+                        <!-- Alerts will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+</div>
+
+<script>
+let dashboardData = {};
+let profitChart = null;
+let foodCostChart = null;
+
+// Load dashboard on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadDashboard();
+});
+
+function loadDashboard() {
+    const dateRange = document.getElementById('dateRange').value;
+    document.getElementById('loadingState').style.display = 'block';
+    document.getElementById('dashboardContent').style.display = 'none';
+    
+    frappe.call({
+        method: 'ury.ury.api.dashboard_analytics.get_dashboard_overview',
+        args: {
+            date_range: dateRange
+        },
+        callback: function(response) {
+            if (response.message && response.message.success) {
+                dashboardData = response.message;
+                renderDashboard();
+            } else {
+                showError('Failed to load dashboard data');
+            }
+        },
+        error: function(error) {
+            showError('Error loading dashboard: ' + error.message);
+        }
+    });
+}
+
+function renderDashboard() {
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('dashboardContent').style.display = 'block';
+    document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
+    
+    renderMetrics();
+    renderCharts();
+    renderTables();
+    renderAlerts();
+}
+
+function renderMetrics() {
+    const sales = dashboardData.sales_summary;
+    const metricsHtml = `
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value">💰 ${formatCurrency(sales.total_sales)}</div>
+                <div class="metric-label">Total Sales</div>
+                <div class="metric-change">📊 ${sales.total_orders} orders</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value">🍽️ ${formatCurrency(sales.total_food_cost)}</div>
+                <div class="metric-label">Food Cost</div>
+                <div class="metric-change">${sales.food_cost_percentage}% of sales</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value">📈 ${formatCurrency(sales.gross_profit)}</div>
+                <div class="metric-label">Gross Profit</div>
+                <div class="metric-change ${sales.profit_margin >= 60 ? 'positive' : 'negative'}">${sales.profit_margin}% margin</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="metric-card">
+                <div class="metric-value">🛒 ${formatCurrency(sales.avg_order_value)}</div>
+                <div class="metric-label">Avg Order Value</div>
+                <div class="metric-change">👥 ${sales.unique_customers} customers</div>
+            </div>
+        </div>
+    `;
+    document.getElementById('metricsRow').innerHTML = metricsHtml;
+}
+
+function renderCharts() {
+    // Profit Trend Chart
+    const profitData = dashboardData.profit_analysis.daily_trend;
+    const ctx1 = document.getElementById('profitChart').getContext('2d');
+    
+    if (profitChart) profitChart.destroy();
+    
+    profitChart = new Chart(ctx1, {
+        type: 'line',
+        data: {
+            labels: profitData.map(d => formatDate(d.posting_date)),
+            datasets: [{
+                label: 'Sales',
+                data: profitData.map(d => d.sales),
+                borderColor: '#3498db',
+                backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                tension: 0.4
+            }, {
+                label: 'Food Cost',
+                data: profitData.map(d => d.food_cost),
+                borderColor: '#e74c3c',
+                backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                tension: 0.4
+            }, {
+                label: 'Profit',
+                data: profitData.map(d => d.profit),
+                borderColor: '#27ae60',
+                backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return formatCurrency(value);
+                        }
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.dataset.label + ': ' + formatCurrency(context.parsed.y);
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    // Food Cost Breakdown Chart
+    const foodCostData = dashboardData.food_cost_analysis.category_breakdown;
+    const ctx2 = document.getElementById('foodCostChart').getContext('2d');
+    
+    if (foodCostChart) foodCostChart.destroy();
+    
+    foodCostChart = new Chart(ctx2, {
+        type: 'doughnut',
+        data: {
+            labels: foodCostData.map(d => d.category),
+            datasets: [{
+                data: foodCostData.map(d => d.cost),
+                backgroundColor: [
+                    '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0',
+                    '#9966FF', '#FF9F40', '#FF6384', '#C9CBCF'
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.label + ': ' + formatCurrency(context.parsed);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderTables() {
+    // Top Items Table
+    const topItems = dashboardData.top_items;
+    let topItemsHtml = '';
+    topItems.forEach(item => {
+        topItemsHtml += `
+            <tr>
+                <td>${item.item_name}</td>
+                <td>${item.total_qty}</td>
+                <td>${formatCurrency(item.total_sales)}</td>
+                <td><span class="${item.profit_margin >= 50 ? 'positive' : 'negative'}">${item.profit_margin.toFixed(1)}%</span></td>
+            </tr>
+        `;
+    });
+    document.querySelector('#topItemsTable tbody').innerHTML = topItemsHtml;
+    
+    // Expensive Ingredients Table
+    const expensiveIngredients = dashboardData.food_cost_analysis.top_ingredients;
+    let ingredientsHtml = '';
+    expensiveIngredients.forEach(ingredient => {
+        ingredientsHtml += `
+            <tr>
+                <td>${ingredient.item_name}</td>
+                <td>${formatCurrency(ingredient.total_cost)}</td>
+                <td>${ingredient.total_qty} ${ingredient.uom}</td>
+                <td>${ingredient.orders_count}</td>
+            </tr>
+        `;
+    });
+    document.querySelector('#expensiveIngredientsTable tbody').innerHTML = ingredientsHtml;
+    
+    // Low Stock Table
+    const lowStock = dashboardData.inventory_status.low_stock_items;
+    let lowStockHtml = '';
+    lowStock.forEach(item => {
+        const status = item.actual_qty <= item.safety_stock / 2 ? 'Critical' : 'Low';
+        const statusClass = status === 'Critical' ? 'negative' : 'text-warning';
+        lowStockHtml += `
+            <tr>
+                <td>${item.item_name}</td>
+                <td>${item.actual_qty} ${item.stock_uom}</td>
+                <td>${item.safety_stock} ${item.stock_uom}</td>
+                <td><span class="${statusClass}">${status}</span></td>
+            </tr>
+        `;
+    });
+    document.querySelector('#lowStockTable tbody').innerHTML = lowStockHtml;
+}
+
+function renderAlerts() {
+    const alerts = dashboardData.stock_alerts;
+    let alertsHtml = '';
+    
+    if (alerts.length === 0) {
+        alertsHtml = '<div class="alert-item">✅ No alerts - everything looks good!</div>';
+    } else {
+        alerts.forEach(alert => {
+            alertsHtml += `
+                <div class="alert-item alert-${alert.severity}">
+                    <strong>${alert.type === 'low_stock' ? '📦' : '💰'} ${alert.type.replace('_', ' ').toUpperCase()}</strong><br>
+                    ${alert.message}
+                </div>
+            `;
+        });
+    }
+    
+    document.getElementById('alertsContainer').innerHTML = alertsHtml;
+}
+
+function refreshDashboard() {
+    loadDashboard();
+}
+
+function formatCurrency(amount) {
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'ETB',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    }).format(amount || 0);
+}
+
+function formatDate(dateStr) {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric'
+    });
+}
+
+function showError(message) {
+    document.getElementById('loadingState').innerHTML = `
+        <h3>❌ Error</h3>
+        <p>${message}</p>
+        <button class="btn-refresh" onclick="loadDashboard()">Try Again</button>
+    `;
+}
+</script>
+{% endblock %}

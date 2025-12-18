@@ -430,3 +430,197 @@ def validate_bom_ingredients_stock(bom_name, production_qty=1, warehouse=None):
         
     except Exception as e:
         return {"success": False, "message": str(e)}
+
+@frappe.whitelist()
+def calculate_food_cost_for_menu_item(item_code, qty=1):
+    """
+    Calculate food cost for a menu item based on its BOM
+    Returns cost breakdown and profit analysis
+    """
+    try:
+        # Get BOM for the item
+        bom = frappe.db.get_value("BOM", 
+            {"item": item_code, "is_active": 1, "is_default": 1, "docstatus": 1}, 
+            "name")
+        
+        if not bom:
+            return {"success": False, "message": f"No active BOM found for {item_code}"}
+        
+        # Use ERPNext's BOM explosion
+        from erpnext.manufacturing.doctype.bom.bom import get_bom_items_as_dict
+        
+        bom_items = get_bom_items_as_dict(
+            bom=bom,
+            company=frappe.defaults.get_user_default("Company"),
+            qty=qty,
+            fetch_exploded=1
+        )
+        
+        # Calculate total food cost
+        total_food_cost = 0
+        ingredient_breakdown = []
+        
+        for item_code_bom, bom_item in bom_items.items():
+            ingredient_cost = bom_item.qty * (bom_item.rate or 0)
+            total_food_cost += ingredient_cost
+            
+            ingredient_breakdown.append({
+                "item_code": item_code_bom,
+                "item_name": bom_item.item_name,
+                "qty": bom_item.qty,
+                "uom": bom_item.uom,
+                "rate": bom_item.rate or 0,
+                "cost": ingredient_cost
+            })
+        
+        # Get selling price
+        selling_price = frappe.db.get_value("Item Price", 
+            {"item_code": item_code}, "price_list_rate") or 0
+        
+        # Calculate profit
+        profit = selling_price - total_food_cost
+        profit_percentage = (profit / selling_price * 100) if selling_price > 0 else 0
+        food_cost_percentage = (total_food_cost / selling_price * 100) if selling_price > 0 else 0
+        
+        return {
+            "success": True,
+            "item_code": item_code,
+            "qty": qty,
+            "bom_name": bom,
+            "total_food_cost": total_food_cost,
+            "selling_price": selling_price,
+            "profit": profit,
+            "profit_percentage": profit_percentage,
+            "food_cost_percentage": food_cost_percentage,
+            "ingredient_breakdown": ingredient_breakdown
+        }
+        
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@frappe.whitelist()
+def get_pos_invoice_food_cost_analysis(pos_invoice_name):
+    """
+    Analyze food cost for all items in a POS Invoice
+    """
+    try:
+        pos_invoice = frappe.get_doc("POS Invoice", pos_invoice_name)
+        
+        total_food_cost = 0
+        total_selling_price = 0
+        item_analysis = []
+        
+        for item in pos_invoice.items:
+            cost_analysis = calculate_food_cost_for_menu_item(item.item_code, item.qty)
+            
+            if cost_analysis["success"]:
+                total_food_cost += cost_analysis["total_food_cost"]
+                total_selling_price += cost_analysis["selling_price"]
+                
+                item_analysis.append({
+                    "item_code": item.item_code,
+                    "item_name": item.item_name,
+                    "qty": item.qty,
+                    "selling_price": cost_analysis["selling_price"],
+                    "food_cost": cost_analysis["total_food_cost"],
+                    "profit": cost_analysis["profit"],
+                    "profit_percentage": cost_analysis["profit_percentage"]
+                })
+        
+        # Overall analysis
+        total_profit = total_selling_price - total_food_cost
+        overall_profit_percentage = (total_profit / total_selling_price * 100) if total_selling_price > 0 else 0
+        overall_food_cost_percentage = (total_food_cost / total_selling_price * 100) if total_selling_price > 0 else 0
+        
+        return {
+            "success": True,
+            "pos_invoice": pos_invoice_name,
+            "total_selling_price": total_selling_price,
+            "total_food_cost": total_food_cost,
+            "total_profit": total_profit,
+            "overall_profit_percentage": overall_profit_percentage,
+            "overall_food_cost_percentage": overall_food_cost_percentage,
+            "item_analysis": item_analysis
+        }
+        
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@frappe.whitelist()
+def setup_menu_item_with_bom(item_name, item_group="Menu Items", selling_price=0, ingredients=None):
+    """
+    Complete setup: Create menu item + BOM + price in one go
+    
+    ingredients format: [
+        {"item_code": "CHICKEN-BREAST", "qty": 150, "uom": "Gram"},
+        {"item_code": "BUN", "qty": 1, "uom": "Nos"},
+        {"item_code": "OIL", "qty": 10, "uom": "ml"}
+    ]
+    """
+    try:
+        if not ingredients:
+            return {"success": False, "message": "Ingredients list is required"}
+        
+        # Parse ingredients if it's a string
+        if isinstance(ingredients, str):
+            import json
+            ingredients = json.loads(ingredients)
+        
+        # Generate item code from name
+        item_code = item_name.upper().replace(" ", "-")
+        
+        # 1. Create Menu Item
+        if not frappe.db.exists("Item", item_code):
+            item_doc = frappe.new_doc("Item")
+            item_doc.item_code = item_code
+            item_doc.item_name = item_name
+            item_doc.item_group = item_group
+            item_doc.stock_uom = "Nos"  # Default for menu items
+            item_doc.is_sales_item = 1
+            item_doc.is_stock_item = 0  # Menu items are non-stock
+            item_doc.description = f"Menu item: {item_name}"
+            item_doc.insert()
+        
+        # 2. Create BOM
+        bom_doc = frappe.new_doc("BOM")
+        bom_doc.item = item_code
+        bom_doc.item_name = item_name
+        bom_doc.quantity = 1  # 1 serving
+        bom_doc.uom = "Nos"
+        bom_doc.is_active = 1
+        bom_doc.is_default = 1
+        
+        # Add ingredients to BOM
+        for ingredient in ingredients:
+            bom_doc.append("items", {
+                "item_code": ingredient["item_code"],
+                "qty": ingredient["qty"],
+                "uom": ingredient["uom"],
+                "rate": frappe.db.get_value("Item Price", 
+                    {"item_code": ingredient["item_code"]}, "price_list_rate") or 0
+            })
+        
+        bom_doc.insert()
+        bom_doc.submit()
+        
+        # 3. Create Item Price
+        if selling_price > 0:
+            create_item_price(item_code, selling_price)
+        
+        # 4. Calculate food cost
+        cost_analysis = calculate_food_cost_for_menu_item(item_code, 1)
+        
+        return {
+            "success": True,
+            "message": f"Menu item {item_name} created successfully",
+            "item_code": item_code,
+            "bom_name": bom_doc.name,
+            "selling_price": selling_price,
+            "food_cost_analysis": cost_analysis
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Error setting up menu item {item_name}: {str(e)}", "Menu Item Setup Error")
+        return {"success": False, "message": str(e)}

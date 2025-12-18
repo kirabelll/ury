@@ -121,8 +121,12 @@ doc_events = {
     "POS Invoice": {
         "before_insert": "ury.ury.hooks.ury_pos_invoice.before_insert",
         "validate": "ury.ury.hooks.ury_pos_invoice.validate",
-        "after_insert":"ury.ury.api.ury_kot_order_number.set_order_number",
+        "after_insert": [
+            "ury.ury.api.ury_kot_order_number.set_order_number",
+            "ury.ury.hooks.ury_pos_invoice.after_insert"
+        ],
         "before_submit": "ury.ury.hooks.ury_pos_invoice.before_submit",
+        "on_update_after_submit": "ury.ury.hooks.ury_pos_invoice.on_update_after_submit",
         "on_cancel": "ury.ury.hooks.ury_pos_invoice.on_trash",
         "on_trash": "ury.ury.hooks.ury_pos_invoice.on_trash",
     },
@@ -312,6 +316,7 @@ fixtures = [
                     "POS Profile-paid_limit",
                     "POS Profile-table_attention_time",
                     "POS Profile-custom_enable_inventory_deduction",
+                    "Stock Entry-custom_pos_invoice",
                     "POS Opening Entry-restaurant_info",
                     "POS Opening Entry-restaurant",
                     "POS Opening Entry-column_break_e3dky",
