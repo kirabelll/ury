@@ -556,42 +556,82 @@ def cancel_order(invoice_id, reason):
 # Method for URY POS
 @frappe.whitelist()
 def make_invoice(customer=None, payments=None, cashier=None, pos_profile=None, owner=None, additionalDiscount=None, table=None, invoice=None):
-    # Parse payments if it's a string (JSON from frontend)
-    if payments and isinstance(payments, str):
-        payments = json.loads(payments)
-    
-    # Ensure payments is a list
-    if not payments:
-        payments = []
-    
-    order_type =  invoice_name = frappe.get_value("POS Invoice",invoice , "order_type")
-    invoice = get_order_invoice(table, invoice, order_type, "Payments")
-
-    if table:
-        restaurant = get_restaurant_and_menu_name(table)
-        invoice.restaurant = restaurant
-
-    # Only set customer if provided
-    if customer:
-        invoice.customer = customer
-    invoice.pos_profile = pos_profile
-    invoice.additional_discount_percentage=additionalDiscount
-    invoice.calculate_taxes_and_totals()
-
-    for pay in invoice.payments:
-        pay.delete(pay.mode_of_payment)
-
-    for d in payments:
-        invoice.append(
-            "payments", dict(mode_of_payment=d["mode_of_payment"], amount=d["amount"])
-        )
-
-    invoice.owner = owner
-    invoice.save()
     try:
-        invoice.submit()
+        # Log the incoming parameters for debugging
+        frappe.log_error(f"make_invoice called with: customer={customer}, payments={payments}, cashier={cashier}, pos_profile={pos_profile}, owner={owner}, table={table}, invoice={invoice}", "Payment Debug")
+        
+        # Parse payments if it's a string (JSON from frontend)
+        if payments and isinstance(payments, str):
+            payments = json.loads(payments)
+        
+        # Ensure payments is a list
+        if not payments:
+            payments = []
+        
+        # Validate required parameters
+        if not invoice:
+            frappe.throw("Invoice is required for payment processing")
+        
+        if not payments:
+            frappe.throw("At least one payment method is required")
+        
+        if not pos_profile:
+            frappe.throw("POS Profile is required")
+        
+        order_type = invoice_name = frappe.get_value("POS Invoice", invoice, "order_type")
+        invoice_doc = get_order_invoice(table, invoice, order_type, "Payments")
+        
+        if not invoice_doc:
+            frappe.throw(f"Could not find POS Invoice: {invoice}")
+
+        if table:
+            restaurant = get_restaurant_and_menu_name(table)
+            invoice_doc.restaurant = restaurant
+
+        # Only set customer if provided
+        if customer:
+            invoice_doc.customer = customer
+        
+        if pos_profile:
+            invoice_doc.pos_profile = pos_profile
+        
+        if additionalDiscount:
+            invoice_doc.additional_discount_percentage = additionalDiscount
+        
+        invoice_doc.calculate_taxes_and_totals()
+
+        # Clear existing payments
+        for pay in invoice_doc.payments:
+            pay.delete(pay.mode_of_payment)
+
+        # Add new payments
+        for payment_data in payments:
+            if not payment_data.get("mode_of_payment"):
+                frappe.throw("Payment mode is required for each payment")
+            if not payment_data.get("amount") or payment_data.get("amount") <= 0:
+                frappe.throw("Payment amount must be greater than 0")
+                
+            invoice_doc.append("payments", {
+                "mode_of_payment": payment_data["mode_of_payment"], 
+                "amount": payment_data["amount"]
+            })
+
+        if owner:
+            invoice_doc.owner = owner
+        
+        invoice_doc.save()
+        
+        try:
+            invoice_doc.submit()
+            frappe.log_error(f"Payment successful for invoice: {invoice_doc.name}", "Payment Success")
+            return {"success": True, "message": "Payment processed successfully", "invoice": invoice_doc.name}
+        except Exception as e:
+            frappe.log_error(f"Error submitting invoice {invoice_doc.name}: {str(e)}", "Payment Submit Error")
+            frappe.throw(f"Error while settling order: {e}")
+            
     except Exception as e:
-        frappe.throw(f"Error while settling order: {e}")
+        frappe.log_error(f"Payment processing error: {str(e)}", "Payment Processing Error")
+        frappe.throw(f"Payment failed: {str(e)}")
     
     
 
@@ -667,3 +707,85 @@ def change_table_in_kot(invoice, new_table, branch):
         production = frappe.db.get_value("URY KOT", kot.name, "production")
         kot_channel = "{}_{}_{}".format("kot_update", branch, production)
         frappe.publish_realtime(kot_channel)
+
+@frappe.whitelist()
+def process_payment(customer=None, payments=None, cashier=None, pos_profile=None, owner=None, additionalDiscount=None, table=None, invoice=None):
+    """
+    Alternative payment processing function
+    """
+    try:
+        # Parse payments if it's a string (JSON from frontend)
+        if payments and isinstance(payments, str):
+            payments = json.loads(payments)
+        
+        # Ensure payments is a list
+        if not payments:
+            payments = []
+        
+        # Validate required parameters
+        if not payments:
+            frappe.throw("Payments are required")
+        if not cashier:
+            frappe.throw("Cashier is required")
+        if not pos_profile:
+            frappe.throw("POS Profile is required")
+        if not owner:
+            frappe.throw("Owner is required")
+        
+        order_type = invoice_name = frappe.get_value("POS Invoice", invoice, "order_type")
+        invoice_doc = get_order_invoice(table, invoice, order_type, "Payments")
+
+        if table:
+            restaurant = get_restaurant_and_menu_name(table)
+            invoice_doc.restaurant = restaurant
+
+        # Only set customer if provided
+        if customer:
+            invoice_doc.customer = customer
+        
+        invoice_doc.pos_profile = pos_profile
+        if additionalDiscount:
+            invoice_doc.additional_discount_percentage = additionalDiscount
+        
+        invoice_doc.calculate_taxes_and_totals()
+
+        # Clear existing payments
+        for pay in invoice_doc.payments:
+            pay.delete(pay.mode_of_payment)
+
+        # Add new payments
+        for payment in payments:
+            invoice_doc.append("payments", {
+                "mode_of_payment": payment["mode_of_payment"], 
+                "amount": payment["amount"]
+            })
+
+        invoice_doc.owner = owner
+        invoice_doc.save()
+        
+        try:
+            invoice_doc.submit()
+            return {"success": True, "message": "Payment processed successfully", "invoice": invoice_doc.name}
+        except Exception as e:
+            frappe.throw(f"Error while settling order: {e}")
+            
+    except Exception as e:
+        frappe.log_error(f"Payment processing error: {str(e)}", "Payment Error")
+        frappe.throw(f"Payment processing failed: {str(e)}")
+@frappe.whitelist()
+def test_payment_data(**kwargs):
+    """
+    Test function to debug payment data structure
+    """
+    try:
+        frappe.log_error(f"Received payment data: {kwargs}", "Payment Data Test")
+        return {
+            "success": True,
+            "received_data": kwargs,
+            "message": "Payment data received successfully"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
